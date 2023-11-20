@@ -121,6 +121,7 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
         }
     }
     # update on rho
+    # prior: rho ~ Beta(1,RHO_HYPERPAMA)
     delta = runif(1, RHO_PROPOSAL, 1/RHO_PROPOSAL)
     rho_temp = 1 - delta*(1-rho)
     Sigma_temp = matrix(rho_temp,nrow=2,ncol=2); diag(Sigma_temp)=1
@@ -128,6 +129,7 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
       pU0(U0,Sigma_temp)-pU0(U0,Sigma)+pU(U,U0,tau,Sigma_temp)-pU(U,U0,tau,Sigma)-log(delta)
     if(log_accept_rate > log(runif(1))){rho=rho_temp;Sigma=Sigma_temp}
     # update on theta - MALLOWS
+    # prior: theta ~ gamma(shape=THETA_HYPERPAMA,rate=1)
     if (noise_model=='mallows'){
       theta_temp = rnorm(1,theta,0.5)
       if(theta_temp>0){
@@ -138,6 +140,7 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
       }
     }
     # update on p - QUEUE-JUMPING
+    # prior: r = log(p/(1-p)) ~ Normal(0, R_HYPERPAMA)
     if (noise_model=='queue-jumping'){
       r = log(p/(1-p))
       r_temp = rnorm(1,r,1)
@@ -148,6 +151,7 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
       if(log_accept_rate > log(runif(1))){p = p_temp; loglkd = loglkd_temp}
     }
     # update on tau
+    # prior: t=log(tau/(1-tau)) ~ Normal(0, T_HYPERPAMA)
     t = log(tau/(1-tau))
     t_temp = rnorm(1,t,1)
     tau_temp = 1/(1+exp(-t_temp))
