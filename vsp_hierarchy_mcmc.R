@@ -82,30 +82,25 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
   
   for(itr in 1:n_itr){
     # update on U0 and U
-    U0_temp = U0
-    c = sample(NUM_ACTORS,1)
+    ## proposing new U0 (update one row)
+    U0_temp = U0; c = sample(NUM_ACTORS,1)
     U0_temp_c = rmvnorm(n=1,sigma=Sigma)
     U0_temp[c,] = U0_temp_c
-    U_temp = U
-    trees_temp = trees
-    allvsp = TRUE
+    ## proposing new U (corresponding row)
+    U_temp = U; trees_temp = trees; allvsp = TRUE
     for (j in 1:NUM_ASSESSORS){
       u = U_temp[[j]]
       u[c,] = rmvnorm(n=1,mean=tau*U0_temp_c,sigma=(1-tau^2)*Sigma)
       potree_j = po2tree(u2po(u))
-      if (!potree_j$is_vsp) {
-        allvsp=FALSE; break
-      } else {
-        trees_temp[[j]]=potree_j$tree
-        U_temp[[j]] = u
+      if (!potree_j$is_vsp) {allvsp=FALSE; break} else {
+        trees_temp[[j]]=potree_j$tree; U_temp[[j]] = u
       }
     }
     if (allvsp){
       loglkd_temp = loglik(trees_temp,Y,p,theta)
       log_accept_rate = loglkd_temp - loglkd
       if (log_accept_rate > log(runif(1))) {
-        U0=U0_temp; U=U_temp
-        trees=trees_temp; loglkd=loglkd_temp
+        U0=U0_temp; U=U_temp; trees=trees_temp; loglkd=loglkd_temp
         }
     }
     # update on rho
