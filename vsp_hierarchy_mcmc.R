@@ -69,6 +69,8 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
   if (noise_model=='queue-jumping'){loglik=loglikQJ}
   if (noise_model=='mallows'){loglik=loglikM}
   
+  loglkd = loglik(trees,Y,p,theta)
+  
   # initiate storage lists/vectors
   U0_PATH = vector(mode= "list", length = n_itr/n_record)
   U_PATH = vector(mode="list", length = n_itr/n_record)
@@ -78,46 +80,32 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
   P_PATH = vector(mode= "numeric", length = (n_itr/n_record)) # for QUEUE-JUMPING
   LOGLKD_PATH = vector(mode="numeric", length = n_itr/n_record)
   
-  Sigma = matrix(rho, 2, 2); diag(Sigma) = 1
-  loglkd = loglik(trees,Y,p,theta)
-  
   for(itr in 1:n_itr){
-    # update on U0
+    # update on U0 and U
     U0_temp = U0
-    c = sample(NUM_ACTORS,1); i = sample(2,1)
-    U0_temp[c,i] = rcmvnorm(n=1, mean=U0[c,], sigma=Sigma, dependent.ind=i, 
-                            given.ind=(1:2)[-i], X.given=U0[c,-i])
-    is_vsp = po2tree(u2po(U0_temp))$is_vsp
-    if (is_vsp){
-      log_accept_rate = pU0(U0_temp,Sigma)-pU0(U0,Sigma)+pU(U,U0=U0_temp,tau,Sigma)-
-        pU(U,U0=U0,tau,Sigma)
-      if (log_accept_rate > log(runif(1))) {U0=U0_temp}
-    }
-    # update on U
+    c = sample(NUM_ACTORS,1)
+    U0_temp_c = rmvnorm(n=1,sigma=Sigma)
+    U0_temp[c,] = U0_temp_c
+    U_temp = U
+    trees_temp = trees
+    allvsp = TRUE
     for (j in 1:NUM_ASSESSORS){
-      U_temp=U
-      u_temp = U[[j]]
-      c = sample(NUM_ACTORS,1); i = sample(2,1)
-      u_temp[c,i] = rcmvnorm(n=1, mean=u_temp[c,], sigma=Sigma, dependent.ind=i, 
-                             given.ind=(1:2)[-i], X.given=u_temp[c,-i])
-      U_temp[[j]] = u_temp
-      po_j_temp = u2po(u_temp)
-      trees_temp = trees
-      if (all(pos[[j]] == po_j_temp)){
-        loglkd_temp=loglkd
-        log_accept_rate = pU(U_temp,U0,tau,Sigma) - pU(U,U0,tau,Sigma)
+      u = U_temp[[j]]
+      u[c,] = rmvnorm(n=1,mean=tau*U0_temp_c,sigma=(1-tau^2)*Sigma)
+      potree_j = po2tree(u2po(u))
+      if (!potree_j$is_vsp) {
+        allvsp=FALSE; break
       } else {
-        potree = po2tree(po_j_temp)
-        if (potree$is_vsp){
-          trees_temp = trees
-          trees_temp[[j]] = potree$tree
-          loglkd_temp = loglik(trees_temp,Y,p,theta)
-          log_accept_rate = loglkd_temp - loglkd + pU(U_temp,U0,tau,Sigma) - 
-            pU(U,U0,tau,Sigma)
-        }
+        trees_temp[[j]]=potree_j$tree
+        U_temp[[j]] = u
       }
+    }
+    if (allvsp){
+      loglkd_temp = loglik(trees_temp,Y,p,theta)
+      log_accept_rate = loglkd_temp - loglkd
       if (log_accept_rate > log(runif(1))) {
-        U=U_temp; loglkd=loglkd_temp; trees=trees_temp
+        U0=U0_temp; U=U_temp
+        trees=trees_temp; loglkd=loglkd_temp
         }
     }
     # update on rho
@@ -139,7 +127,7 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
         if(log_accept_rate > log(runif(1))){theta=theta_temp; loglkd=loglkd_temp}
       }
     }
-    # update on p - QUEUE-JUMPING
+    # update on p - QUEUE-JUMPING - WORKS! 
     # prior: r = log(p/(1-p)) ~ Normal(0, R_HYPERPAMA)
     if (noise_model=='queue-jumping'){
       r = log(p/(1-p))
@@ -150,7 +138,7 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
         dnorm(r,0,R_HYPERPAMA,log=TRUE)
       if(log_accept_rate > log(runif(1))){p = p_temp; loglkd = loglkd_temp}
     }
-    # update on tau
+    # update on tau - WORKS! 
     # prior: t=log(tau/(1-tau)) ~ Normal(0, T_HYPERPAMA)
     t = log(tau/(1-tau))
     t_temp = rnorm(1,t,1)
