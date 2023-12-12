@@ -82,25 +82,30 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
   
   for(itr in 1:n_itr){
     # update on U0 and U
-    ## proposing new U0 (update one row)
-    U0_temp = U0; c = sample(NUM_ACTORS,1)
+    U0_temp = U0
+    c = sample(NUM_ACTORS,1)
     U0_temp_c = rmvnorm(n=1,sigma=Sigma)
     U0_temp[c,] = U0_temp_c
-    ## proposing new U (corresponding row)
-    U_temp = U; trees_temp = trees; allvsp = TRUE
+    U_temp = U
+    trees_temp = trees
+    allvsp = TRUE
     for (j in 1:NUM_ASSESSORS){
       u = U_temp[[j]]
       u[c,] = rmvnorm(n=1,mean=tau*U0_temp_c,sigma=(1-tau^2)*Sigma)
       potree_j = po2tree(u2po(u))
-      if (!potree_j$is_vsp) {allvsp=FALSE; break} else {
-        trees_temp[[j]]=potree_j$tree; U_temp[[j]] = u
+      if (!potree_j$is_vsp) {
+        allvsp=FALSE; break
+      } else {
+        trees_temp[[j]]=potree_j$tree
+        U_temp[[j]] = u
       }
     }
     if (allvsp){
       loglkd_temp = loglik(trees_temp,Y,p,theta)
       log_accept_rate = loglkd_temp - loglkd
       if (log_accept_rate > log(runif(1))) {
-        U0=U0_temp; U=U_temp; trees=trees_temp; loglkd=loglkd_temp
+        U0=U0_temp; U=U_temp
+        trees=trees_temp; loglkd=loglkd_temp
         }
     }
     # update on rho
@@ -161,3 +166,46 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
   }
   return(output)
 }
+
+
+# # update on U0
+# U0_temp = U0
+# c = sample(NUM_ACTORS,1); i = sample(2,1)
+# # U0_temp[c,i] = rcmvnorm(n=1, mean=U0[c,], sigma=Sigma, dependent.ind=i, 
+# #                         given.ind=(1:2)[-i], X.given=U0[c,-i])
+# U0_temp[c,i]=rnorm(1,U0[c,i],1)
+# is_vsp = po2tree(u2po(U0_temp))$is_vsp
+# if (is_vsp){
+#   log_accept_rate = pU0(U0_temp,Sigma)-pU0(U0,Sigma)+pU(U,U0=U0_temp,tau,Sigma)-
+#     pU(U,U0=U0,tau,Sigma)
+#   if (log_accept_rate > log(runif(1))) {U0=U0_temp}
+# }
+# # update on U
+# for (j in 1:NUM_ASSESSORS){
+#   U_temp=U
+#   u_temp = U[[j]]
+#   c = sample(NUM_ACTORS,1); i = sample(2,1)
+#   # u_temp[c,i] = rcmvnorm(n=1, mean=u_temp[c,], sigma=(1-tau^2)*Sigma, 
+#   #                        dependent.ind=i,given.ind=(1:2)[-i], X.given=u_temp[c,-i])
+#   u_temp[c,i]=rnorm(1,U[[j]][c,i],1)
+#   U_temp[[j]] = u_temp
+#   po_j_temp = u2po(u_temp)
+#   pos_temp = pos; trees_temp = trees
+#   pos_temp[[j]] = po_j_temp
+#   if (all(pos[[j]] == po_j_temp)){
+#     loglkd_temp=loglkd
+#     log_accept_rate = pU(U_temp,U0,tau,Sigma) - pU(U,U0,tau,Sigma)
+#   } else {
+#     potree = po2tree(po_j_temp)
+#     if (potree$is_vsp){
+#       trees_temp[[j]] = potree$tree
+#       loglkd_temp = loglik(trees_temp,Y,p,theta)
+#       log_accept_rate = loglkd_temp - loglkd + pU(U_temp,U0,tau,Sigma) - 
+#         pU(U,U0,tau,Sigma)
+#     }
+#   }
+#   if (log_accept_rate > log(runif(1))) {
+#     U=U_temp; loglkd=loglkd_temp; trees=trees_temp; pos=pos_temp
+#     }
+# }
+
