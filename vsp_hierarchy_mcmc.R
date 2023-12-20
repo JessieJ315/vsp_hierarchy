@@ -1,7 +1,7 @@
 # This script contains the main function for hierarchical vsp mcmc update.
 
 vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
-                         noise_model='queue-jumping'){
+                         noise_model='queue-jumping',hierarchy=TRUE){
   
   # MCMC update for the Hierarchical-VSP model. 
   # This function performs Metropolis Hasting MCMC for the paramters of interest
@@ -53,7 +53,7 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
   U0 = initial_states$U0
   U = initial_states$U
   rho = initial_states$rho
-  tau = initial_states$tau
+  if (hierarchy){tau = initial_states$tau}else{tau=0}
   p = initial_states$p
   theta = initial_states$theta
   
@@ -138,15 +138,13 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
         dnorm(r,0,R_HYPERPAMA,log=TRUE)
       if(log_accept_rate > log(runif(1))){p = p_temp; loglkd = loglkd_temp}
     }
-    # update on tau - WORKS! 
-    # prior: t=log(tau/(1-tau)) ~ Normal(0, T_HYPERPAMA)
-    t = log(tau/(1-tau))
-    t_temp = rnorm(1,t,1)
-    tau_temp = 1/(1+exp(-t_temp))
-    log_accept_rate = dnorm(t_temp,0,T_HYPERPAMA,log=TRUE)-dnorm(t,0,T_HYPERPAMA,log=TRUE)+
-      pU(U,U0,tau_temp,Sigma)-pU(U,U0,tau,Sigma)
-    if(log_accept_rate > log(runif(1))){tau=tau_temp}
-    
+    if(hierarchy){
+      # prior: tau~U[0,1]
+      tau_temp = runif(1)
+      log_accept_rate = pU(U,U0,tau_temp,Sigma)-pU(U,U0,tau,Sigma)
+      if(log_accept_rate > log(runif(1))){tau=tau_temp}
+    }
+
     if (itr %% n_record == 0){
       U0_PATH[[itr/n_record]] = U0
       U_PATH[[itr/n_record]] = U
