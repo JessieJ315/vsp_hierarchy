@@ -10,7 +10,6 @@ dir='~/Desktop/vsp-hierarchy/output'
 setwd(dir)
 
 RHO_HYPERPAMA = 1/4
-T_HYPERPAMA = 1.5
 THETA_HYPERPAMA = 5    # MALLOWS
 R_HYPERPAMA = 1.5  # QUEUE-JUMPING
 RHO_PROPOSAL = 1/2
