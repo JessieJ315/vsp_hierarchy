@@ -111,6 +111,35 @@ u2po = function(U){
   return(tc)
 }
 
+YbyS = function(Y,S){
+  for(i in 1:length(S)){
+    s = S[[i]]
+    Y[s] = lapply(Y[s],function(y){y$assessor=i;return(y)})
+  }
+  return(Y)
+}
+
+S_check = function(Y,S){
+  for (i in 1:length(S)){
+    y_assessors=sapply(Y[S[[i]]],'[[','assessor')
+    y_assessor=unique(y_assessors)
+    if(length(unique(y_assessor))!=1) stop('Y and S does not match!')
+    if(unique(y_assessor)!=i) stop('Y and S does not match!')
+  }
+  return(TRUE)
+}
+
+.Us_add = function(i,Us,e){
+  Us[[i]]$S = c(Us[[i]]$S,e)
+  return(.Us_sort(Us))
+}
+
+.Us_sort = function(Us){
+  Us = lapply(Us, function(x){x$S=sort(x$S);return(x)})
+  Us = Us[order(sapply(Us,function(x) x$S[1],simplify=TRUE),decreasing=FALSE)]
+  return(Us)
+}
+
 # relevant distributions
 invcdf_gumbel = function(v) return(-log(-log(v)))
 
@@ -125,13 +154,14 @@ pU0 <- function(U,Sigma,log=TRUE){
 
 pU <- function(U,U0,tau,Sigma,log=TRUE){
   # The distribution over U given U0, tau and Sigma.
+  Sigma_tau = (1-tau^2)*Sigma
   if (isTRUE(log)){
     log_probs=sapply(U,function(u) sum(apply(u-tau*U0,1,dmvnorm,log=TRUE,
-                                             sigma=(1-tau^2)*Sigma)))
+                                             sigma=Sigma_tau)))
     return(sum(log_probs))
   } else {
     probs = sapply(U,function(u) prod(apply(u-tau*U0,1,dmvnorm,log=FALSE,
-                                            sigma=(1-tau^2)*Sigma)))
+                                            sigma=Sigma_tau)))
     return(prod(probs))
   }
 }
@@ -261,7 +291,7 @@ loglikM <- function(trees,Y,p,theta){
 
 # data structure helper functions
 
-initialisation = function(num_actors, num_assessors){
+initialisation = function(num_actors,Y,clustering){
   # Simulates the initial states to each parameter from their priors.
   # 
   # Parameters
@@ -287,12 +317,17 @@ initialisation = function(num_actors, num_assessors){
   #         corresponding to each assessor.
   #     p:     float=0.5.
   #       The error probability for the queue-jumping noise model. 
-  rho=rbeta(1,1,RHO_HYPERPAMA)
+  if(clustering){
+    S=CRP(n=length(Y),alpha=S_HYPERPAMA,list=TRUE)
+    num_assessors=length(S)
+    Y=YbyS(Y,S)
+  } else {num_assessors=max(sapply(Y,'[[','assessor'))}
+  rho=0.9 #rbeta(1,1,RHO_HYPERPAMA)
   Sigma=matrix(rho,nrow=2,ncol=2); diag(Sigma)=1
   U0 = rmvnorm(num_actors,sigma=Sigma)
   while (!po2tree(u2po(U0))$is_vsp){
-    rho=rbeta(1,1,RHO_HYPERPAMA)
-    Sigma=matrix(rho,nrow=2,ncol=2); diag(Sigma)=1
+    # rho=rbeta(1,1,RHO_HYPERPAMA)
+    # Sigma=matrix(rho,nrow=2,ncol=2); diag(Sigma)=1
     U0 = rmvnorm(num_actors,sigma=Sigma)
   }
   tau=0.5
@@ -303,7 +338,7 @@ initialisation = function(num_actors, num_assessors){
     U = lapply(U_error, function(ue) tau*U0+ue)
   }
   theta=rgamma(1,shape=THETA_HYPERPAMA,rate=1)
-  return(list(rho=rho,tau=tau,theta=theta,U0=U0,U=U,p=0.5))
+  return(list(rho=rho,tau=tau,theta=theta,U0=U0,U=U,p=0.5,S=S,Y=Y))
 }
 
 data_simulation = function(num_actors, num_assessors, num_orders,U0=NULL,U=NULL){
@@ -336,17 +371,16 @@ data_simulation = function(num_actors, num_assessors, num_orders,U0=NULL,U=NULL)
     U = initial_states$U
     U0 = initial_states$U0
   }
-  PO0 = u2po(initial_states$U0)
-  trs = lapply(U, u2po)
-  tcs = lapply(trs, transitive.closure, mat=TRUE, loops=FALSE)
+  PO0 = u2po(U0)
+  tcs = lapply(U, u2po)
   
   N = sum(num_orders)
-  assessors = rep(1:3, times=num_orders)
+  assessors = rep(1:num_assessors, times=num_orders)
   orders = lapply(assessors,function(i) unifLE(tcs[[i]]))
   
   Y = mapply(function(assessor, order) list(assessor=assessor, order=order), 
              assessors, orders, SIMPLIFY=FALSE)
-  return(list(PO0=PO0, POs=trs, Y=Y))
+  return(list(PO0=PO0, POs=tcs, Y=Y))
 }
 
 ## helper function for visualization
