@@ -1,7 +1,7 @@
 # This script contains the main function for hierarchical vsp mcmc update.
 
-vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
-                         noise_model='queue-jumping',hierarchy=TRUE){
+vsp_hierarchy = function(initial_states,chain_name,n_itr=100,n_record=NULL,
+                         noise_model='queue-jumping',hierarchy=TRUE,clustering=TRUE){
   
   # MCMC update for the Hierarchical-VSP model. 
   # This function performs Metropolis Hasting MCMC for the paramters of interest
@@ -26,10 +26,11 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
   #       The error probability for the queue-jumping noise model. 
   #     theta: float, in [0,inf).
   #       The dispersion parameter for the Mallow's noise model. 
-  # 
-  # Y: list. 
-  #   The nested data list. Each data entry contains attributes 'assessor' and 
-  #     'order'. 
+  #     S:     list.
+  #       The clustering to data list.
+  #     Y:     list. 
+  #       The nested data list. Each data entry contains attributes 'assessor' and 
+  #         'order'. 
   # 
   # chain_name: string. 
   #   The name of the output file. 
@@ -44,30 +45,45 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
   #   The choice of noise model, either 'queue-jumping' (vsp) for 'mallows' 
   #     (general po). 
   # 
+  # hierarchy: bool.
+  #   Whether to fit the hierarchical VSP model or the independent VSP model.  
+  # 
+  # clustering: bool.
+  #   Whether to perform clustering on data list.
+  # 
   # Returns
   # -------
   #   List, with attributes:
   #     U0, U, rho, p, tau: same as above. 
   
   # load initial states
+  Y = initial_states$Y
   U0 = initial_states$U0
   U = initial_states$U
   rho = initial_states$rho
-  if (hierarchy){tau = initial_states$tau}else{tau=0}
   p = initial_states$p
   theta = initial_states$theta
+  if (hierarchy) {tau=initial_states$tau}else {tau=0}
+  if (clustering) {
+    S=initial_states$S
+    if(length(S)!=length(U)){stop("Error type 1: the number of assessors does not match!")}
+    if(length(S)!=max(sapply(Y,'[[','assessor'))){stop("Error type 2: the number of assessors does not match!")}
+  } # NEED TO UPDATE NON-CLUSTERING CASE
   
   Sigma=matrix(rho,nrow=2,ncol=2); diag(Sigma)=1
   pos = lapply(U, u2po)
   trees = lapply(pos, function(po) po2tree(po)$tree)
+  Us = lapply(mapply(list,S,U,trees,SIMPLIFY=FALSE),setNames,c('S','U','tree'))
   
   # set recording steps
   n = nrow(U0)
+  N = length(Y)
   if(is.null(n_record)) {n_record = 2*n}
   
   # define likelihood function
   if (noise_model=='queue-jumping'){loglik=loglikQJ}
-  if (noise_model=='mallows'){loglik=loglikM}
+  if (noise_model=='mallows')      {loglik=loglikM}
+  if (noise_model=='test')         {loglik=function(trees,Y,p,theta){return(0)}}
   
   loglkd = loglik(trees,Y,p,theta)
   
@@ -78,9 +94,45 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
   TAU_PATH = vector(mode= "numeric", length = n_itr/n_record)
   THETA_PATH = vector(mode= "numeric", length = (n_itr/n_record)) # for MALLOWS
   P_PATH = vector(mode= "numeric", length = (n_itr/n_record)) # for QUEUE-JUMPING
+  S_PATH = vector(mode= "list", length = n_itr/n_record)
   LOGLKD_PATH = vector(mode="numeric", length = n_itr/n_record)
   
   for(itr in 1:n_itr){
+    if (isTRUE(clustering)){
+      # update on S & U
+      e=sample(N,1)
+      c=which(sapply(S, FUN=function(X) e %in% X)); j=which(S[[c]]==e)
+      
+      Us_reduced=Us; Us_reduced[[c]]$S=Us_reduced[[c]]$S[-j]
+      Us_reduced=Filter(function(x){length(x$S)},Us_reduced)
+      
+      Us_list = lapply(1:length(Us_reduced),.Us_add,Us=Us_reduced,e=e)
+      u = tau*U0+rmvnorm(n,sigma=(1-tau^2)*Sigma)
+      potree=po2tree(u2po(u))
+      while(!potree$is_vsp){
+        u = tau*U0+rmvnorm(n,sigma=(1-tau^2)*Sigma)
+        potree=po2tree(u2po(u))
+      }
+      Us_list = append(Us_list,list(.Us_sort(
+        append(Us_reduced,list(list(S=e,U=u,tree=potree$tree)))
+      )))
+      S_list = lapply(Us_list,function(x){lapply(x,'[[','S')})
+      Y_list = lapply(S_list,YbyS,Y=Y)
+      tree_list = lapply(Us_list,function(x){lapply(x,'[[','tree')})
+      
+      loglkd_v = mapply(loglik,tree_list,Y_list,MoreArgs = list(p=p,theta=theta))
+      loglkd_v = c(loglkd_v,loglkd)
+      weights = exp(loglkd_v)*c(lengths(lapply(Us_reduced,'[[','S')),rep(S_HYPERPAMA,2))
+      
+      ind = sample(1:length(weights),1,prob = weights)
+      if (ind != length(weights)){
+        Us = Us_list[[ind]]
+        S = lapply(Us,'[[','S')
+        U = lapply(Us,'[[','U')
+        trees = lapply(Us,'[[','tree')
+        loglkd = loglkd_v[ind]; Y=Y_list[[ind]]
+        }
+    }
     # update on U0 and U
     U0_temp = U0
     c = sample(NUM_ACTORS,1)
@@ -89,7 +141,7 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
     U_temp = U
     trees_temp = trees
     allvsp = TRUE
-    for (j in 1:NUM_ASSESSORS){
+    for (j in 1:length(U)){
       u = U_temp[[j]]
       u[c,] = rmvnorm(n=1,mean=tau*U0_temp_c,sigma=(1-tau^2)*Sigma)
       potree_j = po2tree(u2po(u))
@@ -127,7 +179,7 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
         if(log_accept_rate > log(runif(1))){theta=theta_temp; loglkd=loglkd_temp}
       }
     }
-    # update on p - QUEUE-JUMPING - WORKS! 
+    # update on p - QUEUE-JUMPING - WORKS!
     # prior: r = log(p/(1-p)) ~ Normal(0, R_HYPERPAMA)
     if (noise_model=='queue-jumping'){
       r = log(p/(1-p))
@@ -148,6 +200,7 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
     if (itr %% n_record == 0){
       U0_PATH[[itr/n_record]] = U0
       U_PATH[[itr/n_record]] = U
+      S_PATH[[itr/n_record]] = S
       RHO_PATH[itr/n_record] = rho
       THETA_PATH[itr/n_record] = theta
       P_PATH[itr/n_record] = p
@@ -155,12 +208,10 @@ vsp_hierarchy = function(initial_states,Y,chain_name,n_itr=100,n_record=NULL,
       LOGLKD_PATH[itr/n_record] = loglkd
       print(itr)
       output = list(U0=U0_PATH,U=U_PATH,rho=RHO_PATH,p=P_PATH,theta=THETA_PATH,
-                    tau=TAU_PATH,loglkd=LOGLKD_PATH)
+                    tau=TAU_PATH,S=S_PATH,loglkd=LOGLKD_PATH)
       save(output, file=paste0(chain_name,".RData"))
     }
   }
   return(output)
 }
-
-
 
