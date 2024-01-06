@@ -1,6 +1,6 @@
 # This script contains the main function for hierarchical vsp mcmc update.
 
-vsp_hierarchy = function(initial_states,chain_name,n_itr=100,n_record=NULL,
+vsp_hierarchy = function(initial_states,chain_name,n_itr=10000,n_record=NULL,
                          noise_model='queue-jumping',hierarchy=TRUE,clustering=TRUE){
   
   # MCMC update for the Hierarchical-VSP model. 
@@ -68,7 +68,10 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=100,n_record=NULL,
     S=initial_states$S
     if(length(S)!=length(U)){stop("Error type 1: the number of assessors does not match!")}
     if(length(S)!=max(sapply(Y,'[[','assessor'))){stop("Error type 2: the number of assessors does not match!")}
-  } # NEED TO UPDATE NON-CLUSTERING CASE
+  } else {
+    assessors=sapply(Y,'[[','assessor')
+    S=lapply(1:length(unique(assessors)), function(t) which(assessors == t))
+  }
   
   Sigma=matrix(rho,nrow=2,ncol=2); diag(Sigma)=1
   pos = lapply(U, u2po)
@@ -101,9 +104,11 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=100,n_record=NULL,
     if (isTRUE(clustering)){
       # update on S & U
       e=sample(N,1)
-      c=which(sapply(S, FUN=function(X) e %in% X)); j=which(S[[c]]==e)
+      clusterIndex=which(sapply(S, FUN=function(X) e %in% X))
+      listIndex=which(S[[clusterIndex]]==e)
       
-      Us_reduced=Us; Us_reduced[[c]]$S=Us_reduced[[c]]$S[-j]
+      Us_reduced=Us
+      Us_reduced[[clusterIndex]]$S=Us_reduced[[clusterIndex]]$S[-listIndex]
       Us_reduced=Filter(function(x){length(x$S)},Us_reduced)
       
       Us_list = lapply(1:length(Us_reduced),.Us_add,Us=Us_reduced,e=e)
@@ -133,6 +138,14 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=100,n_record=NULL,
         loglkd = loglkd_v[ind]; Y=Y_list[[ind]]
         }
     }
+    # update on U0 only
+    U0_temp = U0
+    c = sample(NUM_ACTORS,1); i = sample(2,1)
+    U0_temp[c,i]=rcmvnorm(n=1,mean=U0[c,],sigma=Sigma,dependent.ind=i,
+                          given.ind=(1:2)[-i],X.given=U0[c,-i])
+    log_accept_rate = pU0(U0_temp,Sigma) + pU(U,U0_temp,tau,Sigma)-
+                      pU0(U0,Sigma) - pU(U,U0,tau,Sigma)
+    if (log_accept_rate > log(runif(1))) {U0 = U0_temp}
     # update on U0 and U
     U0_temp = U0
     c = sample(NUM_ACTORS,1)
@@ -141,20 +154,20 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=100,n_record=NULL,
     U_temp = U
     trees_temp = trees
     allvsp = TRUE
-    for (j in 1:length(U)){
-      u = U_temp[[j]]
+    for (assrIndex in 1:length(U)){
+      u = U_temp[[assrIndex]]
       u[c,] = rmvnorm(n=1,mean=tau*U0_temp_c,sigma=(1-tau^2)*Sigma)
-      potree_j = po2tree(u2po(u))
-      if (!potree_j$is_vsp) {
+      potree_tmp = po2tree(u2po(u))
+      if (!potree_tmp$is_vsp) {
         allvsp=FALSE; break
       } else {
-        trees_temp[[j]]=potree_j$tree
-        U_temp[[j]] = u
+        trees_temp[[assrIndex]]=potree_tmp$tree
+        U_temp[[assrIndex]] = u
       }
     }
     if (allvsp){
       loglkd_temp = loglik(trees_temp,Y,p,theta)
-      log_accept_rate = loglkd_temp - loglkd
+      log_accept_rate = loglkd_temp-loglkd
       if (log_accept_rate > log(runif(1))) {
         U0=U0_temp; U=U_temp
         trees=trees_temp; loglkd=loglkd_temp
@@ -192,10 +205,15 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=100,n_record=NULL,
     }
     if(hierarchy){
       # prior: tau~U[0,1]
-      tau_temp = runif(1)
-      log_accept_rate = pU(U,U0,tau_temp,Sigma)-pU(U,U0,tau,Sigma)
+      delta = runif(1, TAU_PROPOSAL, 1/TAU_PROPOSAL)
+      tau_temp = 1 - delta*(1-tau)
+      log_accept_rate = pU(U,U0,tau_temp,Sigma)-pU(U,U0,tau,Sigma)-log(delta)
       if(log_accept_rate > log(runif(1))){tau=tau_temp}
+      # tau_temp = runif(1)
+      # log_accept_rate = pU(U,U0,tau_temp,Sigma)-pU(U,U0,tau,Sigma)
+      # if(log_accept_rate > log(runif(1))){tau=tau_temp}
     }
+    print(loglkd)
 
     if (itr %% n_record == 0){
       U0_PATH[[itr/n_record]] = U0
