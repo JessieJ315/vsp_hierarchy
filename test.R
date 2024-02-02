@@ -11,21 +11,27 @@ setwd(dir)
 RHO_HYPERPAMA = 1/4
 THETA_HYPERPAMA = 5    # MALLOWS
 R_HYPERPAMA = 1.5  # QUEUE-JUMPING
-S_HYPERPAMA = 2
+PDP_THETA = 1
+PDP_ALPHA = 0.2
 RHO_PROPOSAL = 1/2
+TAU_PROPOSAL = 1/2
+
 NUM_ACTORS = 5
 NUM_ASSESSORS = 1
 NUM_ORDERS = rep(4,NUM_ASSESSORS)
+NUM_LISTS = sum(NUM_ORDERS)
+
 
 # Simulation
 
+# po0 = transitive.reduction(randDGDAG(n=NUM_ACTORS))
 po0=matrix(c(0,1,0,1,rep(0,3),1,rep(0,6),1,rep(0,4),1,rep(0,5)),nrow=5,byrow=TRUE)
-rownames(po0)=colnames(po0)=1:5
+rownames(po0)=colnames(po0)=1:NUM_ACTORS
 showDAG(po0)
 U0=PO2Randlatent(transitive.closure(po0,mat=TRUE,loops=FALSE),K=2)
 showDAG(transitive.reduction(u2po(U0)))
 # po2tree(transitive.closure(po0,mat=TRUE,loops=FALSE))
-tau=0.95
+tau=0
 rho=0.9
 Sigma=matrix(rho,nrow=2,ncol=2); diag(Sigma)=1
 U_error = lapply(rep(NUM_ACTORS,NUM_ASSESSORS),function(n) rmvnorm(n,sigma=(1-tau^2)*Sigma))
