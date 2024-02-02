@@ -107,7 +107,7 @@ u2po = function(U){
   ## to adapt to varied k (!!)
   Z =invcdf_gumbel(pnorm(U))
   tc=transitive.closure(order2partial(latent2order(Z),n=NUM_ACTORS),
-                         mat=TRUE,loops=FALSE)
+                        mat=TRUE,loops=FALSE)
   return(tc)
 }
 
@@ -249,11 +249,11 @@ loglikQJ <- function(trees,Y,p,theta=NULL,no_cores=2,phi=0,model='lkdup'){
   if (model=='lkddown') {
     llkda = foreach(le=Y,.combine=c,.export=export_functions) %dopar% 
       Q.LEProb.vsp(tree=trees[[le$assessor]],le=le$order,p=p,q=1)
-    }
+  }
   if (model=='lkdup') {
     llkda = foreach(le=Y,.combine=c,.export=export_functions) %dopar% 
       Q.LEProb.vsp(tree=trees[[le$assessor]],le=le$order,p=p,q=0)
-    }
+  }
   if (model=='bi-directn') {
     q = 1/(1+exp(-phi))
     llkda = foreach(le=Y,.combine=c,.export=export_functions) %dopar% 
@@ -298,8 +298,10 @@ initialisation = function(num_actors,Y,clustering){
   # ----------
   # num_actors: int. 
   #   The number of actors. 
-  # num_assessors: int. 
-  #   The number of assessors. 
+  # Y: list.
+  #   The true data list, each with attributes 'assessor' and 'order'.
+  # clustering: bool.
+  #   Whether to consider list clustering. 
   # 
   # Returns
   # -------
@@ -316,18 +318,22 @@ initialisation = function(num_actors,Y,clustering){
   #       The latent preference weight matrices for the partial orders 
   #         corresponding to each assessor.
   #     p:     float=0.5.
-  #       The error probability for the queue-jumping noise model. 
+  #       The error probability for the queue-jumping noise model.
+  #     S:     list. 
+  #       The list cluster. S=NA if cluster=FALSE. 
+  #     Y:     list.
+  #       The true data list. The 'assessor' field will be updated if cluster=TRUE.
   if(clustering){
-    S=CRP(n=length(Y),alpha=S_HYPERPAMA,list=TRUE)
+    S=rpdp(n=NUM_LISTS,theta=PDP_THETA,alpha=PDP_ALPHA,list=TRUE)
     num_assessors=length(S)
     Y=YbyS(Y,S)
-  } else {num_assessors=max(sapply(Y,'[[','assessor'))}
-  rho=0.9 #rbeta(1,1,RHO_HYPERPAMA)
+  } else {num_assessors=max(sapply(Y,'[[','assessor'));S=NA}
+  rho=rbeta(1,1,RHO_HYPERPAMA)
   Sigma=matrix(rho,nrow=2,ncol=2); diag(Sigma)=1
   U0 = rmvnorm(num_actors,sigma=Sigma)
   while (!po2tree(u2po(U0))$is_vsp){
-    # rho=rbeta(1,1,RHO_HYPERPAMA)
-    # Sigma=matrix(rho,nrow=2,ncol=2); diag(Sigma)=1
+    rho=rbeta(1,1,RHO_HYPERPAMA)
+    Sigma=matrix(rho,nrow=2,ncol=2); diag(Sigma)=1
     U0 = rmvnorm(num_actors,sigma=Sigma)
   }
   tau=0.5
