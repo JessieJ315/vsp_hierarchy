@@ -40,6 +40,7 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=10000,n_record=NULL,
   #
   # n_record: int. 
   #   The step between each path record. We only record every n_record iterations. 
+  #     If NULL, n_record = 2*NUM_ACTORS. 
   #
   # noise_model: string.
   #   The choice of noise model, either 'queue-jumping' (vsp) for 'mallows' 
@@ -54,7 +55,8 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=10000,n_record=NULL,
   # Returns
   # -------
   #   List, with attributes:
-  #     U0, U, rho, p, tau: same as above. 
+  #     U0, U, rho, p, theta, tau, S: same as above. 
+  #     loglkd: the trace of log-likelihood.
   
   # load initial states
   Y = initial_states$Y
@@ -79,9 +81,7 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=10000,n_record=NULL,
   Us = lapply(mapply(list,S,U,trees,SIMPLIFY=FALSE),setNames,c('S','U','tree'))
   
   # set recording steps
-  n = nrow(U0)
-  N = length(Y)
-  if(is.null(n_record)) {n_record = 2*n}
+  if(is.null(n_record)) {n_record = 2*NUM_ACTORS}
   
   # define likelihood function
   if (noise_model=='queue-jumping'){loglik=loglikQJ}
@@ -103,7 +103,7 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=10000,n_record=NULL,
   for(itr in 1:n_itr){
     if (isTRUE(clustering)){
       # update on S & U
-      e=sample(N,1)
+      e=sample(NUM_LISTS,1)
       clusterIndex=which(sapply(S, FUN=function(X) e %in% X))
       listIndex=which(S[[clusterIndex]]==e)
       
@@ -112,10 +112,10 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=10000,n_record=NULL,
       Us_reduced=Filter(function(x){length(x$S)},Us_reduced)
       
       Us_list = lapply(1:length(Us_reduced),.Us_add,Us=Us_reduced,e=e)
-      u = tau*U0+rmvnorm(n,sigma=(1-tau^2)*Sigma)
+      u = tau*U0+rmvnorm(NUM_ACTORS,sigma=(1-tau^2)*Sigma)
       potree=po2tree(u2po(u))
       while(!potree$is_vsp){
-        u = tau*U0+rmvnorm(n,sigma=(1-tau^2)*Sigma)
+        u = tau*U0+rmvnorm(NUM_ACTORS,sigma=(1-tau^2)*Sigma)
         potree=po2tree(u2po(u))
       }
       Us_list = append(Us_list,list(.Us_sort(
@@ -127,7 +127,9 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=10000,n_record=NULL,
       
       loglkd_v = mapply(loglik,tree_list,Y_list,MoreArgs = list(p=p,theta=theta))
       loglkd_v = c(loglkd_v,loglkd)
-      weights = exp(loglkd_v)*c(lengths(lapply(Us_reduced,'[[','S')),rep(S_HYPERPAMA,2))
+      weights_constant_occupied = lengths(lapply(Us_reduced,'[[','S')) - PDP_ALPHA
+      weights_constant_empty = rep(PDP_THETA+PDP_ALPHA*length(Us_reduced),2)
+      weights = exp(loglkd_v)*c(weights_constant_occupied,weights_constant_empty)
       
       ind = sample(1:length(weights),1,prob = weights)
       if (ind != length(weights)){
@@ -136,7 +138,7 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=10000,n_record=NULL,
         U = lapply(Us,'[[','U')
         trees = lapply(Us,'[[','tree')
         loglkd = loglkd_v[ind]; Y=Y_list[[ind]]
-        }
+      }
     }
     # update on U0 only
     U0_temp = U0
@@ -144,7 +146,7 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=10000,n_record=NULL,
     U0_temp[c,i]=rcmvnorm(n=1,mean=U0[c,],sigma=Sigma,dependent.ind=i,
                           given.ind=(1:2)[-i],X.given=U0[c,-i])
     log_accept_rate = pU0(U0_temp,Sigma) + pU(U,U0_temp,tau,Sigma)-
-                      pU0(U0,Sigma) - pU(U,U0,tau,Sigma)
+      pU0(U0,Sigma) - pU(U,U0,tau,Sigma)
     if (log_accept_rate > log(runif(1))) {U0 = U0_temp}
     # update on U0 and U
     U0_temp = U0
@@ -171,7 +173,7 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=10000,n_record=NULL,
       if (log_accept_rate > log(runif(1))) {
         U0=U0_temp; U=U_temp
         trees=trees_temp; loglkd=loglkd_temp
-        }
+      }
     }
     # update on rho
     # prior: rho ~ Beta(1,RHO_HYPERPAMA)
@@ -205,16 +207,12 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=10000,n_record=NULL,
     }
     if(hierarchy){
       # prior: tau~U[0,1]
-      delta = runif(1, TAU_PROPOSAL, 1/TAU_PROPOSAL)
-      tau_temp = 1 - delta*(1-tau)
-      log_accept_rate = pU(U,U0,tau_temp,Sigma)-pU(U,U0,tau,Sigma)-log(delta)
+      tau_temp = runif(1)
+      log_accept_rate = pU(U,U0,tau_temp,Sigma)-pU(U,U0,tau,Sigma)
       if(log_accept_rate > log(runif(1))){tau=tau_temp}
-      # tau_temp = runif(1)
-      # log_accept_rate = pU(U,U0,tau_temp,Sigma)-pU(U,U0,tau,Sigma)
-      # if(log_accept_rate > log(runif(1))){tau=tau_temp}
     }
     print(loglkd)
-
+    
     if (itr %% n_record == 0){
       U0_PATH[[itr/n_record]] = U0
       U_PATH[[itr/n_record]] = U
@@ -232,4 +230,3 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=10000,n_record=NULL,
   }
   return(output)
 }
-
