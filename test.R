@@ -1,6 +1,6 @@
 source("~/source-code/pofun.R")
 source("~/source-code/pofun_t.R")
-source("~/vsp/Code/vspfun.R")
+source("~/source-code/vspfun.R")
 source("~/vsp_hierarchy_func.R")
 source("~/vsp_hierarchy_mcmc.R")
 
