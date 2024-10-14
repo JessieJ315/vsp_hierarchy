@@ -1,24 +1,27 @@
-source("~/Desktop/POwTie/code/source-code/pofun.R")
-source("~/Desktop/POwTie/code/source-code/pofun_t.R")
-source("~/Desktop/vsp/Code/vspfun.R")
-# source("~/Desktop/POwTie/code/mallows.R")
-source("~/Desktop/vsp-hierarchy/code/vsp_hierarchy_func.R")
-source("~/Desktop/vsp-hierarchy/code/vsp_hierarchy_mcmc.R")
+source("~/source-code/pofun.R")
+source("~/source-code/pofun_t.R")
+source("~/vsp/Code/vspfun.R")
+source("~/vsp_hierarchy_func.R")
+source("~/vsp_hierarchy_mcmc.R")
 
-dir='~/Desktop/vsp-hierarchy/output'
+dir='~/output'
 setwd(dir)
 
-RHO_HYPERPAMA = 1/4
+clustering = TRUE
+
+# Hyperparameters
+
+RHO_HYPERPAMA = 1/3
 THETA_HYPERPAMA = 5    # MALLOWS
 R_HYPERPAMA = 1.5  # QUEUE-JUMPING
-PDP_THETA = 1
-PDP_ALPHA = 0.2
+PDP_THETA = .5 # PDP_THETA > -PDP_ALPHA
+PDP_ALPHA = 0.15
 RHO_PROPOSAL = 1/2
 TAU_PROPOSAL = 1/2
 
-NUM_ACTORS = 5
-NUM_ASSESSORS = 1
-NUM_ORDERS = rep(4,NUM_ASSESSORS)
+NUM_ACTORS = 10
+NUM_ASSESSORS = 3
+NUM_ORDERS = rep(5,NUM_ASSESSORS)
 NUM_LISTS = sum(NUM_ORDERS)
 
 
@@ -56,4 +59,5 @@ save(simulation,file='simulation1.RData')
 load('simulation1.RData')
 initial_states = initialisation(NUM_ACTORS,Y=simulation$Y,clustering=TRUE)
 
-output = vsp_hierarchy(initial_states,chain_name='test',n_itr=50000,n_record=1,noise_model='test',hierarchy=FALSE,clustering=TRUE)
+output = vsp_hierarchy(initial_states,chain_name='test',n_itr=1e5,n_record=10,
+                       noise_model='queue-jumping',hierarchy=TRUE,clustering=clustering)
