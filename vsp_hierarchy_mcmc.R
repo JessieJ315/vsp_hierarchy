@@ -78,15 +78,14 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=10000,n_record=NULL,
   Sigma=matrix(rho,nrow=2,ncol=2); diag(Sigma)=1
   pos = lapply(U, u2po)
   trees = lapply(pos, function(po) po2tree(po)$tree)
-  Us = lapply(mapply(list,S,U,trees,SIMPLIFY=FALSE),setNames,c('S','U','tree'))
-  
+
   # set recording steps
   if(is.null(n_record)) {n_record = 2*NUM_ACTORS}
   
   # define likelihood function
-  if (noise_model=='queue-jumping'){loglik=loglikQJ}
+  if (noise_model=='queue-jumping'){loglik=loglikQJ;loglik_y=loglikQJ_y}
   if (noise_model=='mallows')      {loglik=loglikM}
-  if (noise_model=='test')         {loglik=function(trees,Y,p,theta){return(0)}}
+  if (noise_model=='test')         {loglik=function(trees,Y,p,theta){return(0)};loglik_y=function(tree,y,p,theta){return(0)}}
   
   loglkd = loglik(trees,Y,p,theta)
   
@@ -101,53 +100,101 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=10000,n_record=NULL,
   LOGLKD_PATH = vector(mode="numeric", length = n_itr/n_record)
   
   for(itr in 1:n_itr){
+    
     if (isTRUE(clustering)){
       # update on S & U
       e=sample(NUM_LISTS,1)
       clusterIndex=which(sapply(S, FUN=function(X) e %in% X))
       listIndex=which(S[[clusterIndex]]==e)
       
-      Us_reduced=Us
-      Us_reduced[[clusterIndex]]$S=Us_reduced[[clusterIndex]]$S[-listIndex]
-      Us_reduced=Filter(function(x){length(x$S)},Us_reduced)
-      
-      Us_list = lapply(1:length(Us_reduced),.Us_add,Us=Us_reduced,e=e)
-      u = tau*U0+rmvnorm(NUM_ACTORS,sigma=(1-tau^2)*Sigma)
-      potree=po2tree(u2po(u))
-      while(!potree$is_vsp){
+      if(length(S[[clusterIndex]])==1){
+        # calculate weights
+        weights = sapply(trees,loglik_y,y=Y[[e]],p=p)
+        weights_constant = lengths(S)-PDP_ALPHA
+        weights_constant[clusterIndex]=PDP_THETA + (length(S)-1)*PDP_ALPHA
+        weights = exp(weights)*weights_constant
+        # sample new cluster
+        ind = sample(1:length(weights),1,prob = weights)
+        if(ind!=clusterIndex){
+          # dimension down
+          S[[ind]] = c(S[[ind]],e)
+          S = S[-clusterIndex];U = U[-clusterIndex];trees = trees[-clusterIndex]
+          Y = YbyS(Y,S)
+          loglkd = loglik(trees,Y,p,theta=theta)
+        }
+      } else {
+        # generate u for new cluster (conditional on being VSP)
         u = tau*U0+rmvnorm(NUM_ACTORS,sigma=(1-tau^2)*Sigma)
         potree=po2tree(u2po(u))
-      }
-      Us_list = append(Us_list,list(.Us_sort(
-        append(Us_reduced,list(list(S=e,U=u,tree=potree$tree)))
-      )))
-      S_list = lapply(Us_list,function(x){lapply(x,'[[','S')})
-      Y_list = lapply(S_list,YbyS,Y=Y)
-      tree_list = lapply(Us_list,function(x){lapply(x,'[[','tree')})
-      
-      loglkd_v = mapply(loglik,tree_list,Y_list,MoreArgs = list(p=p,theta=theta))
-      loglkd_v = c(loglkd_v,loglkd)
-      weights_constant_occupied = lengths(lapply(Us_reduced,'[[','S')) - PDP_ALPHA
-      weights_constant_empty = rep(PDP_THETA+PDP_ALPHA*length(Us_reduced),2)
-      weights = exp(loglkd_v)*c(weights_constant_occupied,weights_constant_empty)
-      
-      ind = sample(1:length(weights),1,prob = weights)
-      if (ind != length(weights)){
-        Us = Us_list[[ind]]
-        S = lapply(Us,'[[','S')
-        U = lapply(Us,'[[','U')
-        trees = lapply(Us,'[[','tree')
-        loglkd = loglkd_v[ind]; Y=Y_list[[ind]]
+        while(!potree$is_vsp){
+          u = tau*U0+rmvnorm(NUM_ACTORS,sigma=(1-tau^2)*Sigma)
+          potree=po2tree(u2po(u))
+        }
+        # calculate weights
+        S_reduced = S
+        S_reduced[[clusterIndex]] = S_reduced[[clusterIndex]][-listIndex]
+        weights = sapply(trees,loglik_y,y=Y[[e]],p=p)
+        weights = exp(weights) * (lengths(S_reduced)-PDP_ALPHA)
+        weight_new = (PDP_THETA+length(S)*PDP_ALPHA)*exp(loglik_y(potree$tree,
+                                                                  Y[[e]],p=p))
+        weights = c(weights, weight_new)
+        # sample new cluster
+        ind = sample(1:length(weights),1,prob = weights)
+        if(ind==length(weights)){
+          # dimension up
+          S = append(S_reduced,e)
+          U = append(U, list(u))
+          trees = append(trees, list(potree$tree))
+          Y = YbyS(Y,S)
+          loglkd = loglik(trees,Y,p,theta=theta)
+        } else {
+          if(ind!=clusterIndex){
+            # dimension remain unchanged
+            S_reduced[[ind]] = c(S_reduced[[ind]],e)
+            S = S_reduced
+            Y = YbyS(Y,S)
+            loglkd = loglik(trees,Y,p,theta=theta)
+          }
+        }
       }
     }
-    # update on U0 only
+    
+    # update on U0
     U0_temp = U0
     c = sample(NUM_ACTORS,1); i = sample(2,1)
-    U0_temp[c,i]=rcmvnorm(n=1,mean=U0[c,],sigma=Sigma,dependent.ind=i,
-                          given.ind=(1:2)[-i],X.given=U0[c,-i])
+    U0_temp[c,i]=rnorm(1,U0[c,i],sd=1)
     log_accept_rate = pU0(U0_temp,Sigma) + pU(U,U0_temp,tau,Sigma)-
       pU0(U0,Sigma) - pU(U,U0,tau,Sigma)
     if (log_accept_rate > log(runif(1))) {U0 = U0_temp}
+    
+    # update on U
+    for (assrIndex in 1:length(U)){
+      U_temp = U
+      trees_temp = trees
+      u_temp = u = U_temp[[assrIndex]]
+      c = sample(NUM_ACTORS,1); i = sample(2,1)
+      u_temp[c,i] = rnorm(1,u[c,i],sd=1)
+      po_temp = u2po(u_temp)
+      trees_temp = trees
+      loglkd_temp = loglkd
+      if(!all(u2po(u_temp) == u2po(u))){
+        potree_tmp = po2tree(po_temp)
+        if (potree_tmp$is_vsp){
+          trees_temp[[assrIndex]]=potree_tmp$tree
+          U_temp[[assrIndex]] = u_temp
+          loglkd_temp = loglik(trees_temp,Y,p,theta)
+          log_accept_rate = loglkd_temp-loglkd+
+            pU(U_temp,U0,tau,Sigma)-pU(U,U0,tau,Sigma)
+        }
+      } else {
+        U_temp[[assrIndex]] = u_temp
+        log_accept_rate = pU(U_temp,U0,tau,Sigma)-pU(U,U0,tau,Sigma)
+      }
+      if (log_accept_rate > log(runif(1))) {
+        U=U_temp; trees=trees_temp; loglkd=loglkd_temp
+      }
+    }
+
     # update on U0 and U
     U0_temp = U0
     c = sample(NUM_ACTORS,1)
@@ -160,14 +207,12 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=10000,n_record=NULL,
       u = U_temp[[assrIndex]]
       u[c,] = rmvnorm(n=1,mean=tau*U0_temp_c,sigma=(1-tau^2)*Sigma)
       potree_tmp = po2tree(u2po(u))
-      if (!potree_tmp$is_vsp) {
-        allvsp=FALSE; break
-      } else {
+      if (potree_tmp$is_vsp){
         trees_temp[[assrIndex]]=potree_tmp$tree
         U_temp[[assrIndex]] = u
-      }
+      } else {allvsp=FALSE; break}
     }
-    if (allvsp){
+    if(allvsp){
       loglkd_temp = loglik(trees_temp,Y,p,theta)
       log_accept_rate = loglkd_temp-loglkd
       if (log_accept_rate > log(runif(1))) {
@@ -211,8 +256,6 @@ vsp_hierarchy = function(initial_states,chain_name,n_itr=10000,n_record=NULL,
       log_accept_rate = pU(U,U0,tau_temp,Sigma)-pU(U,U0,tau,Sigma)
       if(log_accept_rate > log(runif(1))){tau=tau_temp}
     }
-    print(loglkd)
-    
     if (itr %% n_record == 0){
       U0_PATH[[itr/n_record]] = U0
       U_PATH[[itr/n_record]] = U
