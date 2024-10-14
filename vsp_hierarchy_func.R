@@ -114,7 +114,7 @@ u2po = function(U){
 YbyS = function(Y,S){
   for(i in 1:length(S)){
     s = S[[i]]
-    Y[s] = lapply(Y[s],function(y){y$assessor=i;return(y)})
+    Y[s] = lapply(Y[s],function(y,i){y$assessor=i;return(y)},i=i)
   }
   return(Y)
 }
@@ -166,6 +166,64 @@ pU <- function(U,U0,tau,Sigma,log=TRUE){
   }
 }
 
+Q.LEProb.vsp <- function(tree,le,p,q=0) {
+  
+  #if tree is a vsp and le is one list then calculate the likeligood for the list
+  #given the vsp-PO tree. Here p (err prob) and q (prob choose top down at a given le entry insertion)
+  #adapts to the suborder so le and actors.in.tree have same content
+  
+  tree = sub.tree(tree,le)
+  
+  n=length(le)
+  if (n==1) return(1)
+  
+  leaf.nodes=which(sapply(tree,is.leaf))
+  actors.in.tree=sapply(leaf.nodes, function(x) tree[[x]]$actor)
+  
+  ntc=NA
+  if (q>0) {
+    top.i=leaf.nodes[which(actors.in.tree==le[1])]
+    if (length(top.i)!=1) stop('err in QP.LEProb.vsp length(top.i)!=1')
+    le.not=le[-1]
+    tree.not=delete(tree,top.i)
+    prob.top=p/n
+    if (is.top.bot(tree,top.i,'top')) {
+      ntc=nle.tree(tree); 
+      prob.top=prob.top+(1-p)*nle.tree(tree.not)/ntc
+    }
+    top.fac=q*prob.top*QP.LEProb.vsp(tree.not,le.not,p,q)
+  } else {top.fac=0}
+  
+  if (q<1) {
+    bot.i=leaf.nodes[which(actors.in.tree==le[n])]
+    if (length(bot.i)!=1) stop('err in QP.LEProb.vsp length(bot.i)!=1')
+    le.nob=le[-n]
+    tree.nob=delete(tree,bot.i)
+    prob.bot=p/n
+    if (is.top.bot(tree,bot.i,'bot')) {
+      if (is.na(ntc)) {ntc=nle.tree(tree)}
+      prob.bot=prob.bot+(1-p)*nle.tree(tree.nob)/ntc
+    }
+    bot.fac=(1-q)*prob.bot*QP.LEProb.vsp(tree.nob,le.nob,p,q)
+  } else {bot.fac=0}
+  
+  return(top.fac+bot.fac)
+}
+
+loglikQJ_y = function(tree,y,p,theta=NULL,phi=0,model='lkdup'){
+  if (model=='lkddown') {
+    llkda = Q.LEProb.vsp(tree=tree,le=y$order,p=p,q=1)
+  }
+  if (model=='lkdup') {
+    llkda = Q.LEProb.vsp(tree=tree,le=y$order,p=p,q=0)
+  }
+  if (model=='bi-directn') {
+    q = 1/(1+exp(-phi))
+    llkda = Q.LEProb.vsp(tree=tree,le=y$order,p=p,q=q)
+  }
+  return(log(llkda))
+}
+
 loglikQJ <- function(trees,Y,p,theta=NULL,no_cores=2,phi=0,model='lkdup'){
   
   # The log-likelihood for the queue-jumping observation model. This function uses
@@ -197,50 +255,6 @@ loglikQJ <- function(trees,Y,p,theta=NULL,no_cores=2,phi=0,model='lkdup'){
   # -------
   #   float.
   #     The log-likelihood on the data list based on a specified qj model.
-  
-  Q.LEProb.vsp <- function(tree,le,p,q=0) {
-    
-    #if tree is a vsp and le is one list then calculate the likeligood for the list
-    #given the vsp-PO tree. Here p (err prob) and q (prob choose top down at a given le entry insertion)
-    #adapts to the suborder so le and actors.in.tree have same content
-    
-    tree = sub.tree(tree,le)
-    
-    n=length(le)
-    if (n==1) return(1)
-    
-    leaf.nodes=which(sapply(tree,is.leaf))
-    actors.in.tree=sapply(leaf.nodes, function(x) tree[[x]]$actor)
-    
-    ntc=NA
-    if (q>0) {
-      top.i=leaf.nodes[which(actors.in.tree==le[1])]
-      if (length(top.i)!=1) stop('err in QP.LEProb.vsp length(top.i)!=1')
-      le.not=le[-1]
-      tree.not=delete(tree,top.i)
-      prob.top=p/n
-      if (is.top.bot(tree,top.i,'top')) {
-        ntc=nle.tree(tree); 
-        prob.top=prob.top+(1-p)*nle.tree(tree.not)/ntc
-      }
-      top.fac=q*prob.top*QP.LEProb.vsp(tree.not,le.not,p,q)
-    } else {top.fac=0}
-    
-    if (q<1) {
-      bot.i=leaf.nodes[which(actors.in.tree==le[n])]
-      if (length(bot.i)!=1) stop('err in QP.LEProb.vsp length(bot.i)!=1')
-      le.nob=le[-n]
-      tree.nob=delete(tree,bot.i)
-      prob.bot=p/n
-      if (is.top.bot(tree,bot.i,'bot')) {
-        if (is.na(ntc)) {ntc=nle.tree(tree)}
-        prob.bot=prob.bot+(1-p)*nle.tree(tree.nob)/ntc
-      }
-      bot.fac=(1-q)*prob.bot*QP.LEProb.vsp(tree.nob,le.nob,p,q)
-    } else {bot.fac=0}
-    
-    return(top.fac+bot.fac)
-  }
   
   registerDoParallel(cores=no_cores)
   export_functions = c('nle.tree','sub.tree','find.parents','find.actor','is.root',
@@ -325,6 +339,7 @@ initialisation = function(num_actors,Y,clustering){
   #       The true data list. The 'assessor' field will be updated if cluster=TRUE.
   if(clustering){
     S=rpdp(n=NUM_LISTS,theta=PDP_THETA,alpha=PDP_ALPHA,list=TRUE)
+    # S = as.list(1:NUM_LISTS)
     num_assessors=length(S)
     Y=YbyS(Y,S)
   } else {num_assessors=max(sapply(Y,'[[','assessor'));S=NA}
@@ -337,11 +352,15 @@ initialisation = function(num_actors,Y,clustering){
     U0 = rmvnorm(num_actors,sigma=Sigma)
   }
   tau=0.5
-  U_error = lapply(rep(num_actors,num_assessors),function(n) rmvnorm(n,sigma=(1-tau^2)*Sigma))
-  U = lapply(U_error, function(ue) tau*U0+ue)
-  while (!all(sapply(lapply(U,u2po),function(po){po2tree(po)$is_vsp}))){
-    U_error = lapply(rep(num_actors,num_assessors),function(n) rmvnorm(n,sigma=(1-tau^2)*Sigma))
-    U = lapply(U_error, function(ue) tau*U0+ue)
+  U = list()
+  for (i in 1:num_assessors){
+    u_error = rmvnorm(num_actors,sigma=(1-tau^2)*Sigma)
+    u = tau*U0 + u_error
+    while(!po2tree(u2po(u))$is_vsp){
+      u_error = rmvnorm(num_actors,sigma=(1-tau^2)*Sigma)
+      u = tau*U0 + u_error
+    } 
+    U[[i]] = u
   }
   theta=rgamma(1,shape=THETA_HYPERPAMA,rate=1)
   return(list(rho=rho,tau=tau,theta=theta,U0=U0,U=U,p=0.5,S=S,Y=Y))
